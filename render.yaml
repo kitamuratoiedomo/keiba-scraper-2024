@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: keiba-csv-web
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: csvdata
+      mountPath: /data
+      sizeGB: 2
+
+  - type: worker
+    name: keiba-scraper-worker
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: python scrape_rakuten_keiba_2024.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATA_DIR
+        value: /data
+      - key: USER_AGENT
+        value: "Mozilla/5.0 (compatible; KeibaStudyBot/1.0; +https://example.com/)"
+      - key: SLEEP_SECONDS
+        value: "1.5"
+      - key: YEAR
+        value: "2024"
+    disk:
+      name: csvdata
+      mountPath: /data
+      sizeGB: 2
+
+cronJobs:
+  - name: scrape-daily-utc1530
+    schedule: "30 15 * * *"   # JST 00:30 相当（RenderはUTC）
+    task:
+      type: worker
+      name: keiba-scraper-worker
+      env: python
+      startCommand: python scrape_rakuten_keiba_2024.py
