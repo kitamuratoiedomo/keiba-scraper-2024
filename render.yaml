@@ -2,28 +2,24 @@ services:
   - type: web
     name: keiba-csv-web
     env: python
-    plan: free
+    plan: starter
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
       - key: DATA_DIR
         value: /data
 
   - type: worker
     name: keiba-scraper-worker
     env: python
-    plan: free
+    plan: starter
     buildCommand: pip install -r requirements.txt
     startCommand: python scrape_rakuten_keiba_2024.py
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
       - key: DATA_DIR
         value: /data
       - key: USER_AGENT
-        value: "Mozilla/5.0 (compatible; KeibaStudyBot/1.0; +https://example.com/)"
+        value: Mozilla/5.0 (compatible; KeibaStudyBot/1.0)
       - key: SLEEP_SECONDS
         value: "1.5"
       - key: YEAR
