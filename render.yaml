@@ -3,7 +3,7 @@ services:
     name: keiba-csv-web
     env: python
     plan: free
-    buildCommand: ""
+    buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
@@ -15,8 +15,8 @@ services:
     name: keiba-scraper-worker
     env: python
     plan: free
-    buildCommand: ""
-    startCommand: python -c "print('warmup');"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scrape_rakuten_keiba_2024.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
