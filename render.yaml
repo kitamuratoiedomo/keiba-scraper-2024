@@ -36,12 +36,3 @@ services:
       name: csvdata
       mountPath: /data
       sizeGB: 2
-
-cronJobs:
-  - name: scrape-daily-utc1530
-    schedule: "30 15 * * *"   # JST 00:30 相当（RenderはUTC）
-    task:
-      type: worker
-      name: keiba-scraper-worker
-      env: python
-      startCommand: python scrape_rakuten_keiba_2024.py
