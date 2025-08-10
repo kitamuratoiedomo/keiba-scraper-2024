@@ -16,7 +16,7 @@ services:
     env: python
     plan: free
     buildCommand: ""
-    startCommand: python scrape_rakuten_keiba_2024.py
+    startCommand: python -c "print('warmup');"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
