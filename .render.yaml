@@ -9,7 +9,7 @@ services:
         value: /data
 
   - type: worker
-    name: keiba-scraper-worker   # ← これが Worker サービス
+    name: keiba-scraper-worker
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python scrape_rakuten_keiba_2024.py
@@ -17,7 +17,7 @@ services:
       - key: DATA_DIR
         value: /data
       - key: USER_AGENT
-        value: "Mozilla/5.0 (compatible; KeibaStudyBot/1.0)"
+        value: Mozilla/5.0 (compatible; KeibaStudyBot/1.0)
       - key: SLEEP_SECONDS
         value: "1.5"
       - key: YEAR
