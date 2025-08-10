@@ -10,10 +10,6 @@ services:
         value: 3.11.9
       - key: DATA_DIR
         value: /data
-    disk:
-      name: csvdata
-      mountPath: /data
-      sizeGB: 2
 
   - type: worker
     name: keiba-scraper-worker
@@ -32,7 +28,3 @@ services:
         value: "1.5"
       - key: YEAR
         value: "2024"
-    disk:
-      name: csvdata
-      mountPath: /data
-      sizeGB: 2
