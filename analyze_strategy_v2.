@@ -1,0 +1,185 @@
+# analyze_strategy_v2.py
+# 収集CSV（races_*.csv / horses_*.csv）を読み込み、
+# 条件（1番人気=1倍台、2&3番人気<=10、4番人気>=12）に合致するレースを抽出。
+# 三連単「①–②–③」「①–③–②」の2点買い（各100円）で
+# 的中率&回収率を算出します。
+#
+# 追加:
+# - 距離/馬場/場/期間 でのフィルタ
+# - 場別/距離帯別/馬場別の集計も出力
+
+import argparse
+import pandas as pd
+import numpy as np
+
+RACE_CSV_DEFAULT = "races_2024_all_local_ex_obihiro.csv"
+HORSE_CSV_DEFAULT = "horses_2024_all_local_ex_obihiro.csv"
+
+def load_data(race_csv, horse_csv):
+    races = pd.read_csv(race_csv, dtype=str)
+    horses = pd.read_csv(horse_csv, dtype={"popularity": int, "horse_no": int, "win_odds": float, "date": str, "track": str, "race_key": str})
+    # 数値系
+    for c in ["race_no", "distance_m", "trifecta_pay_100yen"]:
+        if c in races.columns:
+            races[c] = pd.to_numeric(races[c], errors="coerce")
+    return races, horses
+
+def apply_filters(races, start_date, end_date, tracks, min_dist, max_dist, goings):
+    df = races.copy()
+    # 日付
+    if start_date:
+        df = df[df["date"] >= start_date]
+    if end_date:
+        df = df[df["date"] <= end_date]
+    # 競馬場
+    if tracks:
+        keep = set([t.strip() for t in tracks.split(",") if t.strip()])
+        df = df[df["track"].isin(keep)]
+    # 距離
+    if min_dist is not None:
+        df = df[df["distance_m"].fillna(0) >= min_dist]
+    if max_dist is not None:
+        df = df[df["distance_m"].fillna(10**9) <= max_dist]
+    # 馬場
+    if goings:
+        keeps = set([g.strip() for g in goings.split(",") if g.strip()])
+        df = df[df["going"].isin(keeps)]
+    return df
+
+def compute_strategy(races_f, horses):
+    # 上位4人気のオッズを作る
+    top = horses.sort_values(["date","track","race_key","popularity"]).groupby(["date","track","race_key"]).head(4)
+    piv = top.pivot_table(index=["date","track","race_key"], columns="popularity",
+                          values=["horse_no","win_odds"], aggfunc="first")
+    piv.columns = [f"{a}{b}" for a,b in piv.columns.to_flat_index()]
+    piv = piv.reset_index()
+
+    # レース情報と結合（距離・馬場なども残す）
+    use_cols = ["date","track","race_key","race_no","distance_m","surface","course_dir","going",
+                "trifecta_combo","trifecta_pay_100yen","race_card_url","odds_url","dividend_url"]
+    df = pd.merge(piv, races_f[use_cols], on=["date","track","race_key"], how="inner")
+
+    # 条件
+    cond = (
+        (df["win_odds1"] >= 1.0) & (df["win_odds1"] < 2.0) &
+        (df["win_odds2"] <= 10.0) &
+        (df["win_odds3"] <= 10.0) &
+        (df["win_odds4"] >= 12.0)
+    )
+    cand = df.loc[cond].copy()
+
+    # ベット作成
+    for k in [1,2,3]:
+        cand[f"horse_no{k}"] = pd.to_numeric(cand[f"horse_no{k}"], errors="coerce").astype("Int64")
+
+    cand["bet1"] = cand["horse_no1"].astype(str) + "-" + cand["horse_no2"].astype(str) + "-" + cand["horse_no3"].astype(str)
+    cand["bet2"] = cand["horse_no1"].astype(str) + "-" + cand["horse_no3"].astype(str) + "-" + cand["horse_no2"].astype(str)
+
+    # 的中判定
+    cand["hit"] = (cand["trifecta_combo"] == cand["bet1"]) | (cand["trifecta_combo"] == cand["bet2"])
+
+    # 払戻（100円あたり）。NaNは0扱い
+    cand["payout"] = np.where(cand["hit"], pd.to_numeric(cand["trifecta_pay_100yen"], errors="coerce"), 0.0).fillna(0.0)
+    cand["cost"] = 200  # 100円×2点
+
+    return cand
+
+def summarize(cand):
+    def _summary(df):
+        target = len(df)
+        hits = int(df["hit"].sum())
+        total_return = float(df["payout"].sum())
+        total_cost = int(target * 200)
+        hit_rate = (hits/target*100) if target else 0.0
+        roi = (total_return/total_cost*100) if total_cost else 0.0
+        return pd.Series({
+            "対象レース数": target,
+            "的中レース数": hits,
+            "的中率(%)": round(hit_rate, 2),
+            "総払戻(円)": int(total_return),
+            "総投資(円)": total_cost,
+            "回収率(%)": round(roi, 2)
+        })
+
+    total = _summary(cand)
+
+    # 場別
+    by_track = cand.groupby("track").apply(_summary).reset_index()
+
+    # 距離帯別（～1200/1400/1600/1800/2000+ など任意に調整可）
+    def bin_distance(x):
+        if pd.isna(x): return "不明"
+        x = int(x)
+        if x <= 1200: return "～1200m"
+        elif x <= 1400: return "1201–1400m"
+        elif x <= 1600: return "1401–1600m"
+        elif x <= 1800: return "1601–1800m"
+        elif x <= 2000: return "1801–2000m"
+        else: return "2001m～"
+
+    cand["dist_bin"] = cand["distance_m"].apply(bin_distance)
+    by_dist = cand.groupby("dist_bin").apply(_summary).reset_index().sort_values("dist_bin")
+
+    # 馬場別
+    by_going = cand.groupby("going", dropna=False).apply(_summary).reset_index().rename(columns={"going":"馬場"})
+
+    return total, by_track, by_dist, by_going
+
+def main():
+    ap = argparse.ArgumentParser(description="三連単2点（①–②–③ / ①–③–②）分析スクリプト（距離・馬場対応）")
+    ap.add_argument("--race_csv", default=RACE_CSV_DEFAULT)
+    ap.add_argument("--horse_csv", default=HORSE_CSV_DEFAULT)
+    ap.add_argument("--tracks", default="", help="例: '園田' または '園田,高知'")
+    ap.add_argument("--start_date", default="20240101", help="YYYYMMDD")
+    ap.add_argument("--end_date", default="20241231", help="YYYYMMDD")
+    ap.add_argument("--min_dist", type=int, default=None)
+    ap.add_argument("--max_dist", type=int, default=None)
+    ap.add_argument("--going", default="", help="例: '良' or '良,稍重'")
+    ap.add_argument("--out_prefix", default="strategy_results")
+    args = ap.parse_args()
+
+    races, horses = load_data(args.race_csv, args.horse_csv)
+    races_f = apply_filters(
+        races,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        tracks=args.tracks,
+        min_dist=args.min_dist,
+        max_dist=args.max_dist,
+        goings=args.going
+    )
+
+    cand = compute_strategy(races_f, horses)
+
+    # 保存（明細）
+    detail_path = f"{args.out_prefix}_detail.csv"
+    cand_cols = [
+        "date","track","race_no","distance_m","surface","course_dir","going",
+        "race_key","bet1","bet2","trifecta_combo","trifecta_pay_100yen",
+        "horse_no1","win_odds1","horse_no2","win_odds2","horse_no3","win_odds3","win_odds4",
+        "hit","payout","cost",
+        "race_card_url","odds_url","dividend_url"
+    ]
+    keep = [c for c in cand_cols if c in cand.columns]
+    cand[keep].sort_values(["date","track","race_no","race_key"]).to_csv(detail_path, index=False)
+
+    total, by_track, by_dist, by_going = summarize(cand)
+    total_path = f"{args.out_prefix}_summary_total.csv"
+    by_track_path = f"{args.out_prefix}_summary_by_track.csv"
+    by_dist_path = f"{args.out_prefix}_summary_by_distance.csv"
+    by_going_path = f"{args.out_prefix}_summary_by_going.csv"
+
+    total.to_frame().T.to_csv(total_path, index=False)
+    by_track.to_csv(by_track_path, index=False)
+    by_dist.to_csv(by_dist_path, index=False)
+    by_going.to_csv(by_going_path, index=False)
+
+    print("=== 集計 完了 ===")
+    print(f"明細         : {detail_path}")
+    print(f"総合サマリ   : {total_path}")
+    print(f"場別サマリ   : {by_track_path}")
+    print(f"距離帯別     : {by_dist_path}")
+    print(f"馬場別       : {by_going_path}")
+
+if __name__ == "__main__":
+    main()
